@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import json
-import re
 import django
 import copy
 
@@ -87,19 +86,6 @@ class JsonField(six.with_metaclass(models.SubfieldBase, models.Field)):
         if self._options:
             kwargs["options"] = self._options
         return name, path, args, kwargs
-
-    def get_transform(self, name):
-        from .lookups import KeyTransformFactory
-
-        transform = super(JsonField, self).get_transform(name)
-        if transform:
-            return transform
-
-        if not re.match("at_\w+", name):
-            return None
-
-        _, key = name.split("_", 1)
-        return KeyTransformFactory(key, self)
 
 
 class JsonBField(JsonField):
