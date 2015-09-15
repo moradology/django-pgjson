@@ -14,6 +14,12 @@ from django_pgjson.fields import JsonField
 from .models import TextModel, TextModelB, TextModelWithDefault
 from .models import TextModelWithIndent
 
+
+class JsonFieldTests(TestCase):
+    def setUp(self):
+        self.model_class = TextModel
+        self.model_class.objects.all().delete()
+
 class JsonBFieldTests(JsonFieldTests):
     def setUp(self):
         self.model_class = TextModelB
@@ -101,3 +107,34 @@ class JsonBFieldTests(JsonFieldTests):
         qs = self.model_class.objects.filter(data__jhas_all=("title", 123))
         self.assertEqual(qs.count(), 1)
 
+
+#class ArrayFormFieldTests(TestCase):
+#    def test_regular_forms(self):
+#        form = IntArrayForm()
+#        self.assertFalse(form.is_valid())
+#        form = IntArrayForm({'data':u'[1,2]'})
+#        self.assertTrue(form.is_valid())
+#
+#    def test_empty_value(self):
+#        form = IntArrayForm({'data':u''})
+#        self.assertTrue(form.is_valid())
+#        self.assertEqual(form.cleaned_data['data'], [])
+#
+#    def test_admin_forms(self):
+#        site = AdminSite()
+#        model_admin = ModelAdmin(self.model_class, site)
+#        form_clazz = model_admin.get_form(None)
+#        form_instance = form_clazz()
+#
+#        try:
+#            form_instance.as_table()
+#        except TypeError:
+#            self.fail('HTML Rendering of the form caused a TypeError')
+#
+#    def test_invalid_error(self):
+#        form = IntArrayForm({'data':1})
+#        self.assertFalse(form.is_valid())
+#        self.assertEqual(
+#            form.errors['data'],
+#            [u'Enter a list of values, joined by commas.  E.g. "a,b,c".']
+#            )
