@@ -1,45 +1,98 @@
-# -*- encoding: utf-8 -*-
+#!/usr/bin/env python
 
 from django.utils.functional import cached_property
 from django.utils import six
-from django.db.models import Transform, Lookup, CharField
+from django.db.models import Lookup
 
 
-class KeyTransform(Transform):
+class FilterTree:
 
-    output_field = CharField()
+    def __init__(self, tree):
+        self.tree = tree
+        self.rules = self.get_rules(self.tree)
 
-    def __init__(self, key, base_field, *args, **kwargs):
-        super(KeyTransform, self).__init__(*args, **kwargs)
-        try:
-            self.key = int(key)
-        except ValueError:
-            self.key = key
+    def is_rule(self, obj):
+        if '_rule_type' in obj:
+            return True
+        else:
+            return False
 
-        self.base_field = base_field
+    def get_rules(self, obj, current_path=[]):
+        """"""
+        # If node is a rule return its location and its details
+        if self.is_rule(obj):
+            return [(current_path, obj)]
+
+        # If node isn't a rule or dictionary
+        if type(obj) != dict:
+            return []
+
+        rules = []
+        for path, val in obj.items():
+            rules = rules + self.get_rules(val, current_path + [path])
+        return rules
+
+    def sql(self):
+        rule_strings = []
+        for rule in self.rules:
+            # If not a properly registered rule type
+            if '_rule_type' not in rule[1]:
+                pass
+            rule_type = rule[1]['_rule_type']
+
+            if rule_type == 'intrange':
+                rule_strings.append(int_range_filter(rule[0], rule[1]))
+        return ' AND '.join(rule_strings)
+
+
+def traversal(path):
+    """Construct traversal instructions for Postgres from a list of nodes
+    """
+    traversal = "data->'" + "'->'".join(path) + "'"
+    return traversal
+
+
+def int_range_filter(path, range_rule):
+    """From a path, a minimum, and a maximum, construct the SQL to process int ranges in json
+    range_rule MUST have a minimum or a maximum value to take effect"""
+    traversalInt = "(" + traversal(path) + ")::int"
+    has_min = 'min' in range_rule
+    has_max = 'max' in range_rule
+
+    if has_min:
+        minimum = range_rule['min']
+        less_than = ("{traversal_int} <= {minimum}"
+                     .format(traversal_int=traversalInt,
+                             minimum=minimum))
+
+    if has_max:
+        maximum = range_rule['max']
+        more_than = ("{traversal_int} >= {maximum}"
+                     .format(traversal_int=traversalInt,
+                             maximum=maximum))
+
+    if has_min and not has_max:
+        return less_than
+    elif has_max and not has_min:
+        return more_than
+    elif has_max and has_min:
+        min_and_max = less_than + ' AND ' + more_than
+        return min_and_max
+
+
+class DriverLookup(Lookup):
+    lookup_name = 'jsonb'
 
     def as_sql(self, qn, connection):
-        lhs, params = qn.compile(self.lhs)
+        lhs, lhs_params = self.process_lhs(qn, connection)
+        rhs, rhs_params = self.process_rhs(qn, connection)
 
-        if isinstance(self.key, int):
-            return "(%s->>%s)" % (lhs, self.key), params
+        rules = FilterTree(rhs).rules
 
-        return "(%s->>'%s')" % (lhs, self.key), params
+        params = lhs_params + rhs_params
+        return '{lhs} = {rhs}'.format(lhs=lhs, rhs=rhs), params
 
-    @cached_property
-    def output_type(self):
-        return self.base_field
-
-
-class KeyTransformFactory(object):
-    def __init__(self, key, base_field):
-        self.key = key
-        self.base_field = base_field
-
-    def __call__(self, *args, **kwargs):
-        return KeyTransform(self.key, self.base_field, *args, **kwargs)
-
-
+'''
 class ExactLookup(Lookup):
     lookup_name = 'exact'
 
@@ -54,90 +107,24 @@ class ExactLookup(Lookup):
 
         params = lhs_params + rhs_params
         return '%s = %s' % (lhs, rhs), params
+'''
 
 
-class ArrayLengthLookup(Lookup):
-    lookup_name = 'array_length'
+def test():
+    mock_rule = {'_rule_type': 'sort of a cheat'}
+    mock_int_rule = {'_rule_type': 'intrange', 'min': 1, 'max': 5}
 
-    def as_sql(self, qn, connection):
-        lhs, lhs_params = self.process_lhs(qn, connection)
-        rhs, rhs_params = self.process_rhs(qn, connection)
-        params = lhs_params + rhs_params
-        return 'json_array_length(%s) = %s' % (lhs, rhs), params
+    distraction = {'alpha': {'beta': {'gamma': {'delta': mock_rule}, 'distraction': []}}}
+    distraction_tree = FilterTree(distraction)
 
+    two_rules = {'testing': mock_int_rule, 'alpha': {'beta': {'gamma': {'delta': mock_rule}, 'distraction': []}}}
+    two_rule_tree = FilterTree(two_rules)
 
-class JsonBArrayLengthLookup(Lookup):
-    lookup_name = 'array_length'
-
-    def as_sql(self, qn, connection):
-        lhs, lhs_params = self.process_lhs(qn, connection)
-        rhs, rhs_params = self.process_rhs(qn, connection)
-        params = lhs_params + rhs_params
-        return 'jsonb_array_length(%s) = %s' % (lhs, rhs), params
-
-
-class JsonBContainsLookup(Lookup):
-    """
-    jsonb-specific containment lookup that can be used as follows::
-
-        YourModel.objects.filter(data__jcontains={"author": "John Smith"}
-
-    This will be translated into the following SQL::
-
-        select * from yourmodel where data @> '{"author": "John Smith"}'::jsonb
-
-    You can also do interesting queries like::
-
-        MyMovie.objects.filter(data__jcontains={"tags": ["sad", "romantic"]}
-
-    Such queries can be accelerated by GiN indices on the jsonb field in
-    question.
-
-    :author: Charl P. Botha <cpbotha@vxlabs.com>
-
-    """
-
-    # ideally we would call this 'contains'. However, in Django 'contains'
-    # lookups are explicitly handled by LIKE queries, and the
-    # Field.get_db_prep_lookup will then prepare your data for a DB LIKE query
-    # breaking our jsonb containment query. -- cpb
-    lookup_name = 'jcontains'
-
-    def as_sql(self, qn, connection):
-        lhs, lhs_params = self.process_lhs(qn, connection)
-        rhs, rhs_params = self.process_rhs(qn, connection)
-        params = lhs_params + rhs_params
-        return "{0} @> {1}::jsonb".format(lhs, rhs), params
-
-
-class JsonBHasLookup(Lookup):
-    """ JsonB specific lookup for the has (?) operator """
-    lookup_name = 'jhas'
-
-    def as_sql(self, qn, connection):
-        lhs, lhs_params = self.process_lhs(qn, connection)
-        rhs, rhs_params = self.process_rhs(qn, connection)
-        params = lhs_params + rhs_params
-        return "{0} ? {1}".format(lhs, rhs), params
-
-
-class JsonBHasAnyLookup(Lookup):
-    """ JsonB specific lookup for the has any (?|) operator """
-    lookup_name = 'jhas_any'
-
-    def as_sql(self, qn, connection):
-        lhs, lhs_params = self.process_lhs(qn, connection)
-        rhs, rhs_params = self.process_rhs(qn, connection)
-        params = lhs_params + rhs_params
-        return "{0} ?| {1}".format(lhs, rhs), params
-
-
-class JsonBHasAllLookup(Lookup):
-    """ JsonB specific lookup for the has all (?&) operator """
-    lookup_name = 'jhas_all'
-
-    def as_sql(self, qn, connection):
-        lhs, lhs_params = self.process_lhs(qn, connection)
-        rhs, rhs_params = self.process_rhs(qn, connection)
-        params = lhs_params + rhs_params
-        return "{0} ?& {1}".format(lhs, rhs), params
+    print(distraction_tree.rules)
+    print(two_rule_tree.rules)
+    print(distraction_tree.sql())
+    print(two_rule_tree.sql())
+    assert(traversal(['a', 'b', 'c']) == "data->'a'->'b'->'c'")
+    assert(two_rule_tree.rules == [(['alpha', 'beta', 'gamma', 'delta'], mock_rule), (['testing'], mock_int_rule)])
+    assert(distraction_tree.rules == [(['alpha', 'beta', 'gamma', 'delta'], mock_rule)])
+    print('Success')

@@ -134,19 +134,9 @@ class JsonBField(JsonField):
         return value
 
 if django.get_version() >= "1.7":
-    from .lookups import ExactLookup
-    from .lookups import (ArrayLengthLookup, JsonBArrayLengthLookup, JsonBContainsLookup,
-                          JsonBHasLookup, JsonBHasAnyLookup, JsonBHasAllLookup)
+    from .lookups import DriverLookup
 
-    JsonField.register_lookup(ExactLookup)
-    JsonField.register_lookup(ArrayLengthLookup)
-
-    JsonBField.register_lookup(ExactLookup)
-    JsonBField.register_lookup(JsonBArrayLengthLookup)
-    JsonBField.register_lookup(JsonBContainsLookup)
-    JsonBField.register_lookup(JsonBHasLookup)
-    JsonBField.register_lookup(JsonBHasAnyLookup)
-    JsonBField.register_lookup(JsonBHasAllLookup)
+    JsonField.register_lookup(DriverLookup)
 
 
 class JsonFormField(forms.CharField):
