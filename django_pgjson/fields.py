@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import json
-import re
 import django
 import copy
 
@@ -88,19 +87,6 @@ class JsonField(six.with_metaclass(models.SubfieldBase, models.Field)):
             kwargs["options"] = self._options
         return name, path, args, kwargs
 
-    def get_transform(self, name):
-        from .lookups import KeyTransformFactory
-
-        transform = super(JsonField, self).get_transform(name)
-        if transform:
-            return transform
-
-        if not re.match("at_\w+", name):
-            return None
-
-        _, key = name.split("_", 1)
-        return KeyTransformFactory(key, self)
-
 
 class JsonBField(JsonField):
     def db_type(self, connection):
@@ -134,19 +120,9 @@ class JsonBField(JsonField):
         return value
 
 if django.get_version() >= "1.7":
-    from .lookups import ExactLookup
-    from .lookups import (ArrayLengthLookup, JsonBArrayLengthLookup, JsonBContainsLookup,
-                          JsonBHasLookup, JsonBHasAnyLookup, JsonBHasAllLookup)
+    from .lookups import DriverLookup
 
-    JsonField.register_lookup(ExactLookup)
-    JsonField.register_lookup(ArrayLengthLookup)
-
-    JsonBField.register_lookup(ExactLookup)
-    JsonBField.register_lookup(JsonBArrayLengthLookup)
-    JsonBField.register_lookup(JsonBContainsLookup)
-    JsonBField.register_lookup(JsonBHasLookup)
-    JsonBField.register_lookup(JsonBHasAnyLookup)
-    JsonBField.register_lookup(JsonBHasAllLookup)
+    JsonField.register_lookup(DriverLookup)
 
 
 class JsonFormField(forms.CharField):
