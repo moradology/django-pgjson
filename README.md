@@ -1,5 +1,3 @@
-# django-pgjson
+# A fork of django-pgjson
 
-PostgreSQL json support for Django.
-
-Documentation: http://djangonauts.github.io/django-pgjson/
+PostgreSQL jsonb support for Django.
