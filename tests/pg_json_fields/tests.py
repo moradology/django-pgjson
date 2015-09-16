@@ -24,6 +24,24 @@ class JsonBFieldTests(JsonFieldTests):
     def setUp(self):
         self.model_class = TextModelB
 
+    def test_intrange_filter(self):
+        """Filtering within a range should work"""
+        self.model_class.objects.create(data={'a': {'b': {'c': 2} } })
+        self.model_class.objects.create(data={'a': {'b': {'c': 2000} } })
+	filt = {'a': { 'b': { 'c': {'_rule_type': 'intrange', 'min': 1, 'max': 5} } } }
+
+	query = self.model_class.objects.filter(data__jsonb=filt) 
+        self.assertEqual(query.count(), 1)
+    def test_intrange_filter(self):
+        """Filtering within a range should work"""
+        self.model_class.objects.create(data={'a': {'b': {'c': 2} } })
+        self.model_class.objects.create(data={'a': {'b': {'c': 2000} } })
+	filt = {'a': { 'b': { 'c': {'_rule_type': 'containment', 'contains': [1,2,3]} } } }
+
+	query = self.model_class.objects.filter(data__jsonb=filt) 
+        self.assertEqual(query.count(), 1)
+
+    '''
     def test_jcontains_lookup1(self):
         self.model_class.objects.create(data=[1, 2, [1, 3]])
         self.model_class.objects.create(data=[4, 5, 6])
@@ -106,6 +124,7 @@ class JsonBFieldTests(JsonFieldTests):
         # Coerce int values
         qs = self.model_class.objects.filter(data__jhas_all=("title", 123))
         self.assertEqual(qs.count(), 1)
+     '''
 
 
 #class ArrayFormFieldTests(TestCase):
