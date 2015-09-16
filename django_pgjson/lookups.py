@@ -8,6 +8,12 @@ from django.db.models import Lookup
 
 
 class FilterTree:
+    """This class should properly assemble the pieces necessary to write the WHERE clause of
+    a postgres query
+    The jsonb_filter_field property of your view should designate the
+    name of the column to filter by.
+    Manually filtering by way of Django's ORM might look like:
+    Something.objects.filter(jsonfield__jsonb=filter_specification)"""
 
     def __init__(self, tree, field):
         self.field = field
@@ -15,13 +21,14 @@ class FilterTree:
         self.rules = self.get_rules(self.tree)
 
     def is_rule(self, obj):
+        """Check for bottoming out the recursion in `get_rules`"""
         if '_rule_type' in obj:
             return True
         else:
             return False
 
     def get_rules(self, obj, current_path=[]):
-        """"""
+        """Recursively crawl a dict looking for filtering rules"""
         # If node is a rule return its location and its details
         if self.is_rule(obj):
             return [(current_path, obj)]
@@ -36,6 +43,11 @@ class FilterTree:
         return rules
 
     def sql(self):
+        """Produce output that can, jointly, be compiled into SQL by Django and psycopg2.
+
+        The format of the output should be a tuple with a string followed by a list
+        of parameters for compiling that string's templated sections
+        """
         rule_specs = []
         for rule in self.rules:
             # If not a properly registered rule type
@@ -52,7 +64,6 @@ class FilterTree:
         rule_paths_test = [rule[1] for rule in rule_specs]
         rule_paths = [item for sublist in rule_paths_test
                       for item in sublist]
-	import ipdb;ipdb.set_trace()
         outcome = (' AND '.join(rule_strings).format(field=self.field), rule_paths)
         return outcome 
 
@@ -68,30 +79,32 @@ def traversal(path):
     traversal = "{field}" + multiple_steps + "->".join(fmt_strs[:-1]) + "->>{final}".format(final=fmt_strs[-1])
     return traversal
 
+
 def reconstruct_object(path):
-    """Construct the object from root to containment field, recursively"""
+    """Construct the object from root to distant leaf, recursively"""
     if len(path) == 0:
-        return "%s"
+        return '%s'
     else:
-        return { '%s': reconstruct_object(path[1:]) }
+        return "{{{{%s: {recons}}}}}".format(recons=reconstruct_object(path[1:]))
+
 
 def containment_filter(path, range_rule):
-    containment_path = json.dumps(reconstruct_object(path))
+    """Filter for objects that contain the specified value at some location"""
+    containment_path = reconstruct_object(path)
     has_containment = 'contains' in range_rule
-    abstract_contains_str = "{field} @> {filter_jobj}"
+    abstract_contains_str = " @> {filter_jobj}"
 
     if has_containment:
         all_contained = range_rule.get('contains')
 
-    contains_str = ' AND '.join([abstract_contains_str.format(filter_jobj=containment_path, field='{field}')
+    contains_str = ' AND '.join(['{{field}}' + abstract_contains_str.format(filter_jobj=containment_path)
                                  for contained in all_contained])
-    contains_params = [] 
+    contains_params = []
     for contained in all_contained:
         contains_params = contains_params + path + [str(contained)]
 
     return (contains_str, contains_params)
-    
-         
+
 
 def intrange_filter(path, range_rule):
     """From a path, a minimum, and a maximum, construct the SQL to process int ranges in json
@@ -126,10 +139,7 @@ class DriverLookup(Lookup):
         lhs, lhs_params = self.process_lhs(qn, connection)
         rhs, rhs_params = self.process_rhs(qn, connection)
 
-        sql = FilterTree(rhs_params[0], lhs).sql()
-
-        params = lhs_params + rhs_params
-        return sql
+        return FilterTree(rhs_params[0], lhs).sql()
 
 
 def test():
@@ -137,24 +147,33 @@ def test():
     mock_int_rule = {'_rule_type': 'intrange', 'min': 1, 'max': 5}
     mock_contains_rule = {'_rule_type': 'containment', 'contains': ['test1', 'a thing']}
 
-    distraction = {'alpha': {'beta': {'gamma': {'delta': mock_rule}, 'distraction': []}}}
+    distraction = {'alpha': {'beta': {'gamma': {'delta': mock_int_rule}, 'distraction': []}}}
     distraction_tree = FilterTree(distraction, 'data')
 
-    two_rules = {'testing': mock_int_rule, 'alpha': {'beta': {'gamma': {'delta': mock_rule}, 'distraction': []}}}
+    two_rules = {'testing': mock_int_rule,
+                 'alpha': {'beta': {'gamma': {'delta': mock_rule},
+                                    'distraction': []}}}
     two_rule_tree = FilterTree(two_rules, 'data')
 
-    containment_object = {'a': {'b': {'c': mock_contains_rule} } }
+    containment_object = {'a': {'b': {'c': mock_contains_rule}}}
     containment_tree = FilterTree(containment_object, 'data')
-    containment_sql = ('{field} @> %s AND {field} @> %s', ['test1', 'a thing'])
+
+    print(traversal(['a', 'b', 'c']))
+    assert(traversal(['a', 'b', 'c']) == "{field}->%s->%s->>%s")
+
+    print(two_rule_tree.rules)
+    assert(two_rule_tree.rules == [(['alpha', 'beta', 'gamma', 'delta'], mock_rule), (['testing'], mock_int_rule)])
+    print(two_rule_tree.sql())
+    assert(two_rule_tree.sql() == ('(data->>%s)::int <= %s AND (data->>%s)::int >= %s', ['testing', 5, 'testing', 1]))
 
     print(distraction_tree.rules)
-    print(two_rule_tree.rules)
+    assert(distraction_tree.rules == [(['alpha', 'beta', 'gamma', 'delta'], mock_int_rule)])
     print(distraction_tree.sql())
-    print(two_rule_tree.sql())
-    assert(traversal(['a', 'b', 'c']) == "{field}->%s->%s->>%s")
-    assert(two_rule_tree.rules == [(['alpha', 'beta', 'gamma', 'delta'], mock_rule), (['testing'], mock_int_rule)])
-    assert(distraction_tree.rules == [(['alpha', 'beta', 'gamma', 'delta'], mock_rule)])
+    assert(distraction_tree.sql() == ('(data->%s->%s->%s->>%s)::int <= %s AND (data->%s->%s->%s->>%s)::int >= %s', ['alpha', 'beta', 'gamma', 'delta', 5, 'alpha', 'beta', 'gamma', 'delta', 1]))
+
     print(containment_tree.rules, containment_tree.sql())
     assert(containment_tree.rules == [(['a', 'b', 'c'], mock_contains_rule)])
-    assert(containment_tree.sql() == [(['a', 'b', 'c'], mock_contains_rule)])
+    print(containment_tree.sql())
+    assert(containment_tree.sql() == ('{field} @> {%s: {%s: {%s: %s}}} AND {field} @> {%s: {%s: {%s: %s}}}', ['a', 'b', 'c', 'test1', 'a', 'b', 'c', 'a thing']))
+
     print('Success')
