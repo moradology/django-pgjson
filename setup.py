@@ -7,6 +7,7 @@ description = """
 PostgreSQL json field support for Django.
 """
 
+
 setup(
     name="azv-django-pgjson",
     version="0.0.0",
@@ -21,8 +22,12 @@ setup(
     maintainer_email="",
     packages=find_packages(),
     include_package_data=False,
-    install_requires=[],
+    install_requires=[
+        "Django >=1.8",
+        "psycopg2 >=2.6"
+    ],
     zip_safe=False,
+    test_suite='tests',
     classifiers=[
         "Development Status :: 4 - Beta",
         "Framework :: Django",
