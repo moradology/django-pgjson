@@ -11,8 +11,6 @@ from django_pgjson.lookups import *
 
 class JsonBFieldTests(TestCase):
     def setUp(self):
-        self.model_class = TextModelB
-
         self.mock_rule = {'_rule_type': 'sort of a cheat'}
         self.mock_int_rule = {'_rule_type': 'intrange', 'min': 1, 'max': 5}
         self.mock_contains_rule = {'_rule_type': 'containment', 'contains': ['test1', 'a thing']}
@@ -30,24 +28,24 @@ class JsonBFieldTests(TestCase):
 
     def test_intrange_filter(self):
         """Filtering within a range should work"""
-        self.model_class.objects.create(data={'a': {'b': {'c': 2}}})
-        self.model_class.objects.create(data={'a': {'b': {'c': 2000}}})
+        TextModelB.objects.create(data={'a': {'b': {'c': 2}}})
+        TextModelB.objects.create(data={'a': {'b': {'c': 2000}}})
         filt = {'a': {'b': {'c': {'_rule_type': 'intrange', 'min': 1, 'max': 5}}}}
 
-        #query = self.model_class.objects.filter(data__jsonb=filt)
+        #query = TextModelB.objects.filter(data__jsonb=filt)
         #self.assertEqual(query.count(), 1)
 
     def test_containment_filter(self):
         """Filtering within a range should work"""
-        self.model_class.objects.create(data={'a': {'b': {'c': 2}}})
-        self.model_class.objects.create(data={'a': {'b': {'c': 2000}}})
+        TextModelB.objects.create(data={'a': {'b': {'c': 2}}})
+        TextModelB.objects.create(data={'a': {'b': {'c': 2000}}})
         filt = {'a': {'b': {'c': {'_rule_type': 'containment', 'contains': [1, 2, 3]}}}}
 
-        #query = self.model_class.objects.filter(data__jsonb=filt)
+        #query = TextModelB.objects.filter(data__jsonb=filt)
         #self.assertEqual(query.count(), 1)
 
     def test_traversal_string_creation(self):
-        self.assertEqual(traversal_string(['a', 'b', 'c']), u"%s->%s->>%s")
+        self.assertEqual(traversal_string(['a', 'b', 'c']), u"a->%s->>%s")
 
     def test_intrange_rules(self):
         self.assertEqual(self.two_rule_tree.rules, [(['data', 'testing'], self.mock_int_rule)])
@@ -57,8 +55,41 @@ class JsonBFieldTests(TestCase):
         self.assertEqual(self.containment_tree.rules, [(['data', 'a', 'b', 'c'], self.mock_contains_rule)])
 
     def test_intrange_sql(self):
-        self.assertEqual(self.two_rule_tree.sql(), ('(%s->>%s)::int <= %s AND (%s->>%s)::int >= %s', ['data', 'testing', 5, 'data', 'testing', 1]))
-        self.assertEqual(self.distraction_tree.sql(), ('(%s->%s->%s->%s->>%s)::int <= %s AND (%s->%s->%s->%s->>%s)::int >= %s', ['data', 'alpha', 'beta', 'gamma', 'delta', 5, 'data', 'alpha', 'beta', 'gamma', 'delta', 1]))
+        self.assertEqual(self.two_rule_tree.sql(), (u'(data->>%s)::int <= %s AND (data->>%s)::int >= %s', ('testing', 5, 'testing', 1)))
+        self.assertEqual(self.distraction_tree.sql(),
+                         (u'(data->%s->%s->%s->>%s)::int <= %s AND (data->%s->%s->%s->>%s)::int >= %s',
+                          ('alpha', 'beta', 'gamma', 'delta', 5, 'alpha', 'beta', 'gamma', 'delta', 1)))
 
     def test_containment_sql(self):
-        self.assertEqual(self.containment_tree.sql(), ('%s @> {%s: {%s: {%s: %s}}} OR %s @> {%s: {%s: {%s: %s}}}', ['data', 'a', 'b', 'c', u'test1', 'data', 'a', 'b', 'c', u'a thing']))
+        self.assertEqual(self.containment_tree.sql(),
+                         ("data @> %s OR data @> %s",
+                          ('{"a": {"b": {"c": "test1"}}}', '{"a": {"b": {"c": "a thing"}}}')))
+
+    def test_containment_output(self):
+        self.assertEqual(containment_filter(['a', 'b'], self.mock_contains_rule),
+                         ('a @> %s OR a @> %s',
+                          [u'{"b": "test1"}', u'{"b": "a thing"}']))
+
+    def test_containment_query(self):
+        TextModelB.objects.create(data={'a': {'b': {'c': 1}}})
+        TextModelB.objects.create(data={'a': {'b': {'c': 2000}}})
+
+        filt = {'a': {'b': {'c': {'_rule_type': 'containment', 'contains': [1, 2, 3]}}}}
+        query = TextModelB.objects.filter(data__jsonb=filt)
+        self.assertEqual(query.count(), 1)
+
+        filt2 = {'a': {'b': {'c': {'_rule_type': 'containment', 'contains': [1, 2000, 3]}}}}
+        query2 = TextModelB.objects.filter(data__jsonb=filt2)
+        self.assertEqual(query2.count(), 2)
+
+    def test_intrange_query(self):
+        TextModelB.objects.create(data={'a': {'b': {'c': 1}}})
+        TextModelB.objects.create(data={'a': {'b': {'c': 2000}}})
+
+        filt = {'a': {'b': {'c': {'_rule_type': 'intrange', 'min': 1, 'max': 5}}}}
+        query = TextModelB.objects.filter(data__jsonb=filt)
+        self.assertEqual(query.count(), 1)
+
+        filt2 = {'a': {'b': {'c': {'_rule_type': 'intrange', 'min': 1, 'max': 2005}}}}
+        query2 = TextModelB.objects.filter(data__jsonb=filt2)
+        self.assertEqual(query2.count(), 2)

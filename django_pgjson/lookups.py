@@ -67,17 +67,15 @@ class FilterTree:
         rule_paths_test = [rule[1] for rule in rule_specs]
         rule_paths = [item for sublist in rule_paths_test
                       for item in sublist]
-        outcome = (' AND '.join(rule_strings), rule_paths)
-        return outcome 
+        outcome = (' AND '.join(rule_strings), tuple(rule_paths))
+        return outcome
 
 
 def traversal_string(path):
     """Construct traversal instructions for Postgres from a list of nodes
-
-    Returns a string like: '%s->%S->%s->>%s' for {a: {b: {c: value } } }
-
+    like: '%s->%S->%s->>%s' for {a: {b: {c: value } } }
     """
-    fmt_strs = ['%s' for leaf in path]
+    fmt_strs = [path[0]] + ['%s' for leaf in path[1:]]
     traversal = '->'.join(fmt_strs[:-1]) + '->>%s'
     return traversal
 
@@ -87,23 +85,25 @@ def reconstruct_object(path):
     if len(path) == 0:
         return '%s'
     else:
-        return "{{%s: {recons}}}".format(recons=reconstruct_object(path[1:]))
+        return '{{%s: {recons}}}'.format(recons=reconstruct_object(path[1:]))
 
 
 def containment_filter(path, range_rule):
     """Filter for objects that contain the specified value at some location"""
-    containment_path = reconstruct_object(path[1:])
+    template = reconstruct_object(path[1:])
     has_containment = 'contains' in range_rule
-    abstract_contains_str = " @> {filter_jobj}"
+    abstract_contains_str = path[0] + " @> %s"
 
     if has_containment:
         all_contained = range_rule.get('contains')
 
-    contains_str = ' OR '.join(['%s' + abstract_contains_str.format(filter_jobj=containment_path)
-                                 for contained in all_contained])
     contains_params = []
+    json_path = [json.dumps(x) for x in path[1:]]
     for contained in all_contained:
-        contains_params = contains_params + path + [str(contained)]
+        interpolants = tuple(json_path + [json.dumps(contained)])
+        contains_params.append(template % interpolants)
+
+    contains_str = ' OR '.join([abstract_contains_str] * len(all_contained))
 
     return (contains_str, contains_params)
 
@@ -131,7 +131,7 @@ def intrange_filter(path, range_rule):
         return (less_than, path + [maximum])
     elif has_max and has_min:
         min_and_max = less_than + ' AND ' + more_than
-        return (min_and_max, path + [maximum] + path + [minimum])
+        return (min_and_max, path[1:] + [maximum] + path[1:] + [minimum])
 
 
 class DriverLookup(Lookup):
